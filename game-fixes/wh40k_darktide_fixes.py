@@ -47,6 +47,31 @@ class Change:
 
 
 @dataclass(frozen=True)
+class Tuning:
+    """Values written to Darktide's managed performance assignments."""
+
+    win32_streaming_buffer_size: int = 128
+    win32_streaming_texture_pool_size: int = 1024
+    feedback_buffer_size: int = 16
+    max_age_out_tiles_per_frame: int = 16
+    max_streaming_tiles_per_frame: int = 16
+    max_texture_pool_size: int = 1024
+    staging_buffer_size: int = 8
+    threaded_streamer: bool = True
+    tile_age_out_time_ms: int = 5000
+    tile_staging_buffer_size: int = 64
+    streaming_buffer_size: int = 128
+    streaming_max_open_streams: int = 32
+    streaming_texture_pool_size: int = 1024
+    texture_streaming_buffer_size: int = 128
+    texture_streaming_texture_pool_size: int = 1024
+    worker_threads: int = 8
+
+
+DEFAULT_TUNING = Tuning()
+
+
+@dataclass(frozen=True)
 class _SourceFile:
     path: Path
     contents: bytes
@@ -283,10 +308,10 @@ def _replace_block_assignments(text: str, name: str, replacements: dict[str, str
     )
 
 
-def transform_win32(text: str) -> str:
+def transform_win32(text: str, tuning: Tuning = DEFAULT_TUNING) -> str:
     replacements = {
-        "streaming_buffer_size": "128",
-        "streaming_texture_pool_size": "1024",
+        "streaming_buffer_size": str(tuning.win32_streaming_buffer_size),
+        "streaming_texture_pool_size": str(tuning.win32_streaming_texture_pool_size),
     }
     win32_blocks = _top_level_block_matches(text, "win32")
     if win32_blocks:
@@ -304,25 +329,25 @@ def transform_win32(text: str) -> str:
     )
 
 
-def transform_settings_common(text: str) -> str:
+def transform_settings_common(text: str, tuning: Tuning = DEFAULT_TUNING) -> str:
     feedback_replacements = {
-        "feedback_buffer_size": "16",
-        "max_age_out_tiles_per_frame": "16",
-        "max_streaming_tiles_per_frame": "16",
-        "max_texture_pool_size": "1024",
-        "staging_buffer_size": "8",
-        "threaded_streamer": "true",
-        "tile_age_out_time_ms": "5000",
-        "tile_staging_buffer_size": "64",
+        "feedback_buffer_size": str(tuning.feedback_buffer_size),
+        "max_age_out_tiles_per_frame": str(tuning.max_age_out_tiles_per_frame),
+        "max_streaming_tiles_per_frame": str(tuning.max_streaming_tiles_per_frame),
+        "max_texture_pool_size": str(tuning.max_texture_pool_size),
+        "staging_buffer_size": str(tuning.staging_buffer_size),
+        "threaded_streamer": str(tuning.threaded_streamer).lower(),
+        "tile_age_out_time_ms": str(tuning.tile_age_out_time_ms),
+        "tile_staging_buffer_size": str(tuning.tile_staging_buffer_size),
     }
     texture_replacements = {
-        "streaming_buffer_size": "128",
-        "streaming_texture_pool_size": "1024",
+        "streaming_buffer_size": str(tuning.texture_streaming_buffer_size),
+        "streaming_texture_pool_size": str(tuning.texture_streaming_texture_pool_size),
     }
     top_level_replacements = {
-        "streaming_buffer_size": "128",
-        "streaming_max_open_streams": "32",
-        "streaming_texture_pool_size": "1024",
+        "streaming_buffer_size": str(tuning.streaming_buffer_size),
+        "streaming_max_open_streams": str(tuning.streaming_max_open_streams),
+        "streaming_texture_pool_size": str(tuning.streaming_texture_pool_size),
     }
 
     feedback_open, feedback_close = _named_block(text, "feedback_streamer_settings")
@@ -336,11 +361,13 @@ def transform_settings_common(text: str) -> str:
     return _replace_top_level_assignments(text, top_level_replacements)
 
 
-def transform_user_settings(text: str) -> str:
-    return _replace_block_assignments(text, "threads", {"worker_threads": "8"})
+def transform_user_settings(text: str, tuning: Tuning = DEFAULT_TUNING) -> str:
+    return _replace_block_assignments(
+        text, "threads", {"worker_threads": str(tuning.worker_threads)}
+    )
 
 
-def plan_changes(targets: Targets) -> list[Change]:
+def plan_changes(targets: Targets, tuning: Tuning = DEFAULT_TUNING) -> list[Change]:
     files = target_files(targets)
     contents: dict[str, str] = {}
     for name, path in files.items():
@@ -354,9 +381,9 @@ def plan_changes(targets: Targets) -> list[Change]:
             raise ConfigError(f"could not read configuration file {path}: {error}") from error
 
     transforms = {
-        "win32_settings": transform_win32,
-        "settings_common": transform_settings_common,
-        "user_settings": transform_user_settings,
+        "win32_settings": partial(transform_win32, tuning=tuning),
+        "settings_common": partial(transform_settings_common, tuning=tuning),
+        "user_settings": partial(transform_user_settings, tuning=tuning),
     }
     changes: list[Change] = []
     for name, path in files.items():
@@ -710,6 +737,62 @@ def restore_backup(backup_dir: Path) -> list[Path]:
     return [file.original_path for file in files]
 
 
+def _positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a positive integer") from error
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
+def _add_tuning_arguments(parser: argparse.ArgumentParser) -> None:
+    group = parser.add_argument_group("performance tuning")
+    integer_options = {
+        "win32_streaming_buffer_size": (128, "win32 streamer buffer size"),
+        "win32_streaming_texture_pool_size": (1024, "win32 texture pool size"),
+        "feedback_buffer_size": (16, "feedback streamer buffer size"),
+        "max_age_out_tiles_per_frame": (16, "maximum texture tiles evicted per frame"),
+        "max_streaming_tiles_per_frame": (16, "maximum texture tiles streamed per frame"),
+        "max_texture_pool_size": (1024, "feedback streamer texture-pool capacity"),
+        "staging_buffer_size": (8, "feedback streamer staging-buffer size"),
+        "tile_age_out_time_ms": (5000, "texture tile eviction age in milliseconds"),
+        "tile_staging_buffer_size": (64, "texture tile staging-buffer size"),
+        "streaming_buffer_size": (128, "top-level streaming buffer size"),
+        "streaming_max_open_streams": (32, "maximum open streams"),
+        "streaming_texture_pool_size": (1024, "top-level streaming texture-pool size"),
+        "texture_streaming_buffer_size": (128, "texture-streamer buffer size"),
+        "texture_streaming_texture_pool_size": (1024, "texture-streamer pool size"),
+        "worker_threads": (8, "worker-thread count"),
+    }
+    for destination, (default, help_text) in integer_options.items():
+        group.add_argument(
+            f"--{destination.replace('_', '-')}",
+            dest=destination,
+            type=_positive_int,
+            default=default,
+            metavar="N",
+            help=f"{help_text} (default: {default})",
+        )
+    group.add_argument(
+        "--threaded-streamer",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="enable the threaded feedback streamer (default: enabled)",
+    )
+
+
+def tuning_from_args(args: argparse.Namespace) -> Tuning:
+    """Build immutable tuning values from parsed CLI arguments."""
+    return Tuning(
+        **{
+            name: getattr(args, name)
+            for name in Tuning.__dataclass_fields__
+        }
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the command-line interface for safe Darktide configuration changes."""
     parser = argparse.ArgumentParser(
@@ -743,6 +826,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--home", type=Path, help="override the home directory used for Steam discovery"
     )
+    _add_tuning_arguments(parser)
     return parser
 
 
@@ -768,7 +852,7 @@ def _discover_and_plan(args: argparse.Namespace) -> list[Change]:
     home = args.home if args.home is not None else Path.home()
     targets = discover_targets(home, args.game_dir, args.compatdata_dir)
     _print_targets(targets)
-    return plan_changes(targets)
+    return plan_changes(targets, tuning_from_args(args))
 
 
 def _print_launch_option() -> None:

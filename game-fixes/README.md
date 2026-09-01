@@ -30,6 +30,33 @@ uv run python wh40k_darktide_fixes.py --dry-run \
 discovery. The game and compatibility-prefix overrides can also be used with
 `--apply`.
 
+Every managed performance value has a command-line option. Existing tuning
+values remain the defaults, so commands without tuning options retain their
+previous behavior. Run `--help` for the complete list. For a high-VRAM
+diagnostic profile that restores the feedback-streamer throughput defaults and
+changes only its texture-pool capacity, preview and apply:
+
+```bash
+uv run python wh40k_darktide_fixes.py --dry-run \
+  --feedback-buffer-size 4 \
+  --max-age-out-tiles-per-frame 64 \
+  --max-streaming-tiles-per-frame 64 \
+  --max-texture-pool-size 2048 \
+  --staging-buffer-size 4 \
+  --tile-staging-buffer-size 4
+
+uv run python wh40k_darktide_fixes.py --apply \
+  --feedback-buffer-size 4 \
+  --max-age-out-tiles-per-frame 64 \
+  --max-streaming-tiles-per-frame 64 \
+  --max-texture-pool-size 2048 \
+  --staging-buffer-size 4 \
+  --tile-staging-buffer-size 4
+```
+
+Change one profile at a time and restart Darktide between comparisons. The
+engine does not publicly document the units of these settings.
+
 ## What it changes
 
 The script validates the expected layout before changing values in:

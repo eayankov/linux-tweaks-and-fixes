@@ -290,6 +290,60 @@ def test_parser_help_includes_usage_examples():
     assert "uv run python wh40k_darktide_fixes.py --restore" in help_text
 
 
+def test_custom_tuning_options_control_every_managed_assignment():
+    args = fixes.build_parser().parse_args(
+        [
+            "--dry-run",
+            "--win32-streaming-buffer-size", "201",
+            "--win32-streaming-texture-pool-size", "202",
+            "--feedback-buffer-size", "203",
+            "--max-age-out-tiles-per-frame", "204",
+            "--max-streaming-tiles-per-frame", "205",
+            "--max-texture-pool-size", "206",
+            "--staging-buffer-size", "207",
+            "--no-threaded-streamer",
+            "--tile-age-out-time-ms", "208",
+            "--tile-staging-buffer-size", "209",
+            "--streaming-buffer-size", "210",
+            "--streaming-max-open-streams", "211",
+            "--streaming-texture-pool-size", "212",
+            "--texture-streaming-buffer-size", "213",
+            "--texture-streaming-texture-pool-size", "214",
+            "--worker-threads", "215",
+        ]
+    )
+
+    tuning = fixes.tuning_from_args(args)
+
+    assert "streaming_buffer_size = 201" in fixes.transform_win32(WIN32, tuning)
+    assert "streaming_texture_pool_size = 202" in fixes.transform_win32(WIN32, tuning)
+    common = fixes.transform_settings_common(COMMON, tuning)
+    for name, value in {
+        "feedback_buffer_size": "203",
+        "max_age_out_tiles_per_frame": "204",
+        "max_streaming_tiles_per_frame": "205",
+        "max_texture_pool_size": "206",
+        "staging_buffer_size": "207",
+        "threaded_streamer": "false",
+        "tile_age_out_time_ms": "208",
+        "tile_staging_buffer_size": "209",
+        "streaming_max_open_streams": "211",
+    }.items():
+        assert f"{name} = {value}" in common
+    assert "streaming_buffer_size = 210\n" in common
+    assert "streaming_texture_pool_size = 212\n" in common
+    assert "  streaming_buffer_size = 213\n" in common
+    assert "  streaming_texture_pool_size = 214\n" in common
+    assert "worker_threads = 215" in fixes.transform_user_settings(USER, tuning)
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "not-a-number"])
+def test_tuning_options_reject_non_positive_integers(value, capsys):
+    with pytest.raises(SystemExit):
+        fixes.build_parser().parse_args(["--dry-run", "--max-texture-pool-size", value])
+    assert "must be a positive integer" in capsys.readouterr().err
+
+
 def test_transform_win32_updates_streaming_values_and_preserves_other_lines():
     result = fixes.transform_win32(WIN32)
     assert "streaming_buffer_size = 128" in result
